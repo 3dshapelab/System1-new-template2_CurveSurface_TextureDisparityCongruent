@@ -115,12 +115,15 @@ GLfloat normals[50000000];
 GLuint indices_draw_triangle[50000000]; // tracking indices number
 */
 
-// using vectors to store data
-std::vector<GLfloat> vertices_vec;
-std::vector<GLfloat> texcoors_vec;
-std::vector<GLfloat> colors_vec;
-std::vector<GLfloat> normals_vec;
-std::vector<GLuint> indices_draw_triangle_vec;
+
+struct VerticesData {
+	std::vector<GLfloat> vertices_vec;
+	std::vector<GLfloat> texcoors_vec;
+	std::vector<GLfloat> colors_vec;
+	std::vector<GLfloat> normals_vec;
+	std::vector<GLuint> indices_draw_triangle_vec;
+};
+VerticesData my_vertices;
 
 /********** FUNCTION PROTOTYPES *****/
 void beepOk(int tone);
@@ -138,11 +141,11 @@ void initRendering();
 void initStimulus();
 void drawStimulus();
 double calculateStimulus_ZfromY(double cylDepth, double vertexY);
-void buildVertices_triangles(double cylinderDepth);
-void drawVertices_triangles(int texNum);
+void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data);
+void drawVertices_triangles(int texNum, const VerticesData& vertices_data);
 int LoadGLTextures();
 void drawInfo();
-void buildStimulusVertices(double Depth);
+
 /*************************** FUNCTIONS ***********************************/
 /***** SOUND THINGS *****/
 void beepOk(int tone) {
@@ -185,7 +188,7 @@ void drawInfo() {
 void initGLVariables() {}
 
 void drawStimulus() {
-	drawVertices_triangles(texnum);
+	drawVertices_triangles(texnum, my_vertices);
 }
 
 double calculateStimulus_ZfromY(double cylDepth, double vertexY) {
@@ -200,11 +203,11 @@ double calculateStimulus_ZfromY(double cylDepth, double vertexY) {
 	return (vertexZ);
 }
 
-void buildVertices_triangles(double cylinderDepth) {
-	vertices_vec.clear();
-	colors_vec.clear();
-	texcoors_vec.clear();
-	indices_draw_triangle_vec.clear();
+void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data) {
+	vertices_data.vertices_vec.clear();
+	vertices_data.colors_vec.clear();
+	vertices_data.texcoors_vec.clear();
+	vertices_data.indices_draw_triangle_vec.clear();
 
 	double step_size_width = (stimulus_width / (nr_points_width - 1));
 	double step_size_height = (stimulus_height / (nr_points_height - 1));
@@ -273,16 +276,16 @@ void buildVertices_triangles(double cylinderDepth) {
 
 
 			// using vector
-			vertices_vec.push_back(x);
-			vertices_vec.push_back(y);
-			vertices_vec.push_back(z);
+			vertices_data.vertices_vec.push_back(x);
+			vertices_data.vertices_vec.push_back(y);
+			vertices_data.vertices_vec.push_back(z);
 
-			colors_vec.push_back(1);
-			colors_vec.push_back(0);
-			colors_vec.push_back(0);
+			vertices_data.colors_vec.push_back(1);
+			vertices_data.colors_vec.push_back(0);
+			vertices_data.colors_vec.push_back(0);
 
-			texcoors_vec.push_back(u);
-			texcoors_vec.push_back(v);
+			vertices_data.texcoors_vec.push_back(u);
+			vertices_data.texcoors_vec.push_back(v);
 
 			/*
 				step 2: create an array/vector that store how the triangles should be drawn
@@ -322,13 +325,13 @@ void buildVertices_triangles(double cylinderDepth) {
 				*/
 
 				// using vector
-				indices_draw_triangle_vec.push_back(i_ind);
-				indices_draw_triangle_vec.push_back(i_ind + 1);
-				indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
 
-				indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
-				indices_draw_triangle_vec.push_back(i_ind + 1);
-				indices_draw_triangle_vec.push_back(i_ind + nr_points_width + 1);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width + 1);
 				ind = ind + 6;
 			}
 
@@ -341,7 +344,7 @@ void buildVertices_triangles(double cylinderDepth) {
 	total_ind = ind;
 }
 
-void drawVertices_triangles(int texNum) {
+void drawVertices_triangles(int texNum, const VerticesData& vertices_data) {
 	glLoadIdentity();
 	glTranslated(0, 0, display_distance);
 
@@ -381,11 +384,11 @@ void drawVertices_triangles(int texNum) {
 	*/
 
 	//using vector
-	glVertexPointer(3, GL_FLOAT, 0, &vertices_vec[0]);
-	glTexCoordPointer(2, GL_FLOAT, 0, &texcoors_vec[0]);
-	//glNormalPointer(GL_FLOAT, 0, &normals_vec[0]); //
-	glColorPointer(3, GL_FLOAT, 0, &colors_vec[0]);
-	glDrawElements(GL_TRIANGLES, indices_draw_triangle_vec.size(), GL_UNSIGNED_INT, &indices_draw_triangle_vec[0]);
+	glVertexPointer(3, GL_FLOAT, 0, &vertices_data.vertices_vec[0]);
+	glTexCoordPointer(2, GL_FLOAT, 0, &vertices_data.texcoors_vec[0]);
+	//glNormalPointer(GL_FLOAT, 0, &vertices_data.normals_vec[0]); //
+	glColorPointer(3, GL_FLOAT, 0, &vertices_data.colors_vec[0]);
+	glDrawElements(GL_TRIANGLES, vertices_data.indices_draw_triangle_vec.size(), GL_UNSIGNED_INT, &vertices_data.indices_draw_triangle_vec[0]);
 
 	// deactivate vertex arrays after drawing
 	glDisableClientState(GL_VERTEX_ARRAY);
@@ -396,14 +399,11 @@ void drawVertices_triangles(int texNum) {
 
 
 void initStimulus() {
-	buildStimulusVertices(depth);
+	buildVertices_triangles(depth, my_vertices);
 	initProjectionScreen(display_distance);
 	texnum = 1;
 }
 
-void buildStimulusVertices(double Depth) {
-	buildVertices_triangles(Depth);
-}
 
 void drawGLScene() {
 	if (stereo) {
@@ -479,7 +479,7 @@ void handleKeypress(unsigned char key, int x, int y)
 			}
 
 
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 
 
 		}
@@ -488,7 +488,7 @@ void handleKeypress(unsigned char key, int x, int y)
 		case '2':
 		{
 			depth = depth + depth_step;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 
 
 		}
@@ -519,28 +519,28 @@ void handleKeypress(unsigned char key, int x, int y)
 		case '4':
 		{
 			normalizer_u = normalizer_u - 10;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 			break;
 		}
 
 		case '5':
 		{
 			normalizer_u = normalizer_u + 10;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 			break;
 		}
 
 		case '7':
 		{
 			normalizer_v = normalizer_v - 10;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 			break;
 		}
 
 		case '8':
 		{
 			normalizer_v = normalizer_v + 10;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 			break;
 		}
 
@@ -550,7 +550,7 @@ void handleKeypress(unsigned char key, int x, int y)
 			normalizer = normalizer - 10;
 			normalizer_u = normalizer;
 			normalizer_v = normalizer;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 			break;
 		}
 
@@ -559,7 +559,7 @@ void handleKeypress(unsigned char key, int x, int y)
 			normalizer = normalizer + 10;
 			normalizer_u = normalizer;
 			normalizer_v = normalizer;
-			buildVertices_triangles(depth);
+			buildVertices_triangles(depth, my_vertices);
 			break;
 		}
 	}
