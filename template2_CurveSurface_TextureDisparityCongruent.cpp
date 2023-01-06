@@ -20,6 +20,7 @@
 #include <map>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <random>
 
 /**** BOOOST MULTITHREADED LIBRARY *********/
 #include <boost/thread/thread.hpp>
@@ -91,18 +92,28 @@ double depth = 10;
 double depth_step = 5;
 
 /********* TEXTURE *********/
+bool use_loaded_texture = false;
+
+// loaded texture
 double normalizer_base = 90; // maximum distance along the side on the sine wave fluctuating in depth
 double normalizer = normalizer_base; //will vary based on display distance
 double normalizer_u = normalizer_base;
 double normalizer_v = normalizer_base;
-//TEXTURE LOADING VARIABLE
 GLuint loadedTexture[5];
 int texnum = 0;
 
+// generated texture
+struct Vec2 {
+	float x, y;
+};
+
+struct yzl {
+	float y, z, l;
+};
 
 /********* VERTICES *********/
-double nr_points_width = 201; // nr of points in x direction
-double nr_points_height = 201;
+double nr_points_width = 401; // nr of points in x direction
+double nr_points_height = 401;
 int total_ind = 0;
 // Cylinder composed of triangles (Method 1, recommended)
 
@@ -123,7 +134,8 @@ struct VerticesData {
 	std::vector<GLfloat> normals_vec;
 	std::vector<GLuint> indices_draw_triangle_vec;
 };
-VerticesData my_vertices;
+VerticesData vertices_loadTxt;
+VerticesData vertices_genTxt;
 
 /********** FUNCTION PROTOTYPES *****/
 void beepOk(int tone);
@@ -141,9 +153,11 @@ void initRendering();
 void initStimulus();
 void drawStimulus();
 double calculateStimulus_ZfromY(double cylDepth, double vertexY);
-void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data);
-void drawVertices_triangles(int texNum, const VerticesData& vertices_data);
+void buildVertices_fromLoadedTexture(double cylinderDepth, VerticesData& vertices_data);
+void drawVertices_fromLoadedTexture(int texNum, const VerticesData& vertices_data);
 int LoadGLTextures();
+void buildVertices_generateTexture(double cylinderDepth, double dotDensity, double dotRadius, VerticesData& vertices_data);
+void drawVertices_generateTexture(const VerticesData& vertices_data);
 void drawInfo();
 
 /*************************** FUNCTIONS ***********************************/
@@ -176,9 +190,14 @@ void drawInfo() {
 	text.draw("   ");
 	text.draw(" texture ID: " + stringify<int>(texnum) + "     --- Press +");
 	text.draw("   ");
-	text.draw(" normalizer: " + stringify<double>(normalizer) + "     --- Press 6 9");
-	text.draw(" normalizer_u: " + stringify<double>(normalizer_u) + "     --- Press 4 5");
-	text.draw(" normalizer_v: " + stringify<double>(normalizer_v) + "     --- Press 7 8");
+	if(use_loaded_texture)
+		text.draw(" load Texture");
+	else
+		text.draw(" generate Texture");
+	
+	//text.draw(" normalizer: " + stringify<double>(normalizer) + "     --- Press 6 9");
+	//text.draw(" normalizer_u: " + stringify<double>(normalizer_u) + "     --- Press 4 5");
+	//text.draw(" normalizer_v: " + stringify<double>(normalizer_v) + "     --- Press 7 8");
 
 	text.leaveTextInputMode();
 	glEnable(GL_COLOR_MATERIAL);
@@ -188,7 +207,15 @@ void drawInfo() {
 void initGLVariables() {}
 
 void drawStimulus() {
-	drawVertices_triangles(texnum, my_vertices);
+	//drawVertices_fromLoadedTexture(texnum, vertices_loadTxt);
+	
+	if (use_loaded_texture) {
+		drawVertices_fromLoadedTexture(texnum, vertices_loadTxt);
+	}
+	else {
+		drawVertices_generateTexture(vertices_genTxt);		
+	}
+	
 }
 
 double calculateStimulus_ZfromY(double cylDepth, double vertexY) {
@@ -203,7 +230,7 @@ double calculateStimulus_ZfromY(double cylDepth, double vertexY) {
 	return (vertexZ);
 }
 
-void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data) {
+void buildVertices_fromLoadedTexture(double cylinderDepth, VerticesData& vertices_data) {
 	vertices_data.vertices_vec.clear();
 	vertices_data.colors_vec.clear();
 	vertices_data.texcoors_vec.clear();
@@ -312,7 +339,7 @@ void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data) 
 			*/
 
 			// construct the triangle indices to be drawn
-			if (i < nr_points_width - 1 && j < nr_points_width - 1) {
+			if (i < nr_points_width - 1 && j < nr_points_height - 1) {
 				// using array
 				/*
 				indices_draw_triangle[ind] = i_ind; ind++;
@@ -344,7 +371,7 @@ void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data) 
 	total_ind = ind;
 }
 
-void drawVertices_triangles(int texNum, const VerticesData& vertices_data) {
+void drawVertices_fromLoadedTexture(int texNum, const VerticesData& vertices_data) {
 	glLoadIdentity();
 	glTranslated(0, 0, display_distance);
 
@@ -398,10 +425,259 @@ void drawVertices_triangles(int texNum, const VerticesData& vertices_data) {
 }
 
 
+void buildVertices_generateTexture(double cylinderDepth, double dotDensity, double dotRadius, VerticesData& vertices_data) {
+
+	std::vector<yzl> loop_y;
+	std::vector<Vec2> dot_centers;
+	std::uniform_real_distribution<float> dist(0.f, 1.f);
+
+	vertices_data.vertices_vec.clear();
+	vertices_data.colors_vec.clear();
+	vertices_data.texcoors_vec.clear();
+	vertices_data.indices_draw_triangle_vec.clear();
+
+
+	GLuint i_ind = 0;
+	float y, z;
+	float y_prev = -stimulus_height / 2;
+	float z_prev = calculateStimulus_ZfromY(cylinderDepth, y_prev);
+
+	float total_distance_y = 0; //tracks the distance along y/z axis, approximate the "diameter" of the ellipse
+	double step_size_width = (stimulus_width / (nr_points_width - 1));
+	double step_size_height = (stimulus_height / (nr_points_height - 1));
+
+	// get surface area
+	for (int j = 0; j < nr_points_height; j++) {  // 
+		y = -stimulus_height / 2 + j * step_size_height;
+		z = calculateStimulus_ZfromY(cylinderDepth, y);
+		total_distance_y = total_distance_y + sqrt(pow(y - y_prev, 2) + pow(z - z_prev, 2));
+		loop_y.push_back(yzl{y, z, total_distance_y});
+
+		y_prev = y; z_prev = z;
+	}
+
+	double surface_area = total_distance_y * stimulus_width;
+	cout << surface_area << endl;
+	int num_dot = surface_area * dotDensity;
+	//int num_dot = 60;
+
+	for (int i = 0; i < num_dot; i++) {
+
+		// pick random xy values for the circle center
+		float cx = dist(rng); // 0-1
+		float cy = dist(rng); // 0-1
+		cx *= stimulus_width;
+		cy *= total_distance_y;
+
+		// checking whether the current circle intersects withe the previous circles already pushed
+
+		bool intersect = false;
+		for (int k = 0; k < (int)dot_centers.size(); k++) {
+			Vec2 prev_c = dot_centers[k];
+			if ((cx - prev_c.x) * (cx - prev_c.x) + (cy - prev_c.y) * (cy - prev_c.y) < 5 * dotRadius * dotRadius) {
+				intersect = true;
+				break;
+			}
+
+			/* if the texture is periodic on y, we also need to check the mirrored circle center
+			// Mirror
+			if (prev_c.y < HEIGHT / 2) {
+				prev_c.y += HEIGHT;
+			} else {
+				prev_c.y -= HEIGHT;
+			}
+			if ((cx - prev_c.x) * (cx - prev_c.x) + (cy - prev_c.y) * (cy - prev_c.y) < 4 * dotRadius * dotRadius) {
+				intersect = true;
+				break;
+			}
+			*/
+		}
+		// if intersect, then break and pick a new circle center
+		if (intersect) {
+			i--;
+			continue;
+		}
+		// if not intersect, add this circle to the circles vector
+		dot_centers.push_back(Vec2{ cx, cy });
+	}
+
+
+	for (int j = 0; j < nr_points_height; j++) {  // 
+		yzl cur_y = loop_y[j];
+		y = cur_y.y;
+		z = cur_y.z;
+		float d = cur_y.l;
+
+		for (int i = 0; i < nr_points_width; i++) { //
+			float x = -stimulus_width / 2 + i * step_size_width;
+
+			/*
+			step 1: build the meshgrid using vertices,
+
+
+			(8)---(9)---(10)--(11)
+			 |     |     |     |
+			 |     |     |     |
+			 |     |     |     |
+			 |     |     |     |
+			(4)---(5)---(6)---(7)
+			 |     |     |     |
+			 |     |     |     |
+			 |     |     |     |
+			 |     |     |     |
+			(0)---(1)---(2)---(3)
+
+
+			going over each vertex: store the (x,y,z) to vertices array or vector, (u,v) to texcoors array or vector, (1,0,0) to colors array or vector,
+			if light source or shading is involved, normals are needed
+			*/
+
+			// using vector
+			vertices_data.vertices_vec.push_back(x);
+			vertices_data.vertices_vec.push_back(y);
+			vertices_data.vertices_vec.push_back(z);
+
+
+			float vertex_col = 1.f;
+
+			for (int k = 0; k < (int)dot_centers.size(); k++) {
+
+				Vec2 dc = dot_centers[k];
+				float distSq = (x + stimulus_width / 2 - dc.x) * (x + stimulus_width / 2 - dc.x) + (d - dc.y) * (d - dc.y);
+
+				if (distSq < dotRadius * dotRadius)
+					vertex_col = 0.2f;
+
+				if (distSq < 0.9 * dotRadius * dotRadius)
+					vertex_col = 0.f;
+
+				//if ((x + stimulus_width / 2 - dc.x) * (x + stimulus_width / 2 - dc.x) + (d - dc.y) * (d - dc.y) < 0.8 * dotRadius * dotRadius) {
+				//	vertex_col = 0.0f;
+				//}
+
+				/* if the texture is periodic on y, we also need to check the mirrored circle center
+				// Mirror
+				if (prev_c.y < HEIGHT / 2) {
+					prev_c.y += HEIGHT;
+				} else {
+					prev_c.y -= HEIGHT;
+				}
+				if ((cx - prev_c.x) * (cx - prev_c.x) + (cy - prev_c.y) * (cy - prev_c.y) < 4 * dotRadius * dotRadius) {
+					intersect = true;
+					break;
+				}
+				*/
+			}
+
+
+			vertices_data.colors_vec.push_back(vertex_col);
+			vertices_data.colors_vec.push_back(0);
+			vertices_data.colors_vec.push_back(0);
+
+			/*
+				step 2: create an array/vector that store how the triangles should be drawn
+
+				The array/vector is one dimensional, but is groupped by unit of 3, meaning every three elements form a triangle
+
+				for example, if indices_draw_triangle is like [0 1 4 4 1 5 1 2 5 5 2 6 ...],
+				then it draws triangles with indices {0 1 4}, {4 1 5}, {1 2 5}, {5 2 6}...
+
+				(8)---(9)---(10)--(11)
+				 |\    |\    |\    |
+				 | \   | \   | \   |
+				 |  \  |  \  |  \  |
+				 |   \ |   \ |   \ |
+				(4)---(5)---(6)---(7)
+				 |\    |\    |\    |
+				 | \   | \   | \   |
+				 |  \  |  \  |  \  |
+				 |   \ |   \ |   \ |
+				(0)---(1)---(2)---(3)
+
+				triangle 1: 0 1 4;   triangle 2: 4 1 5
+				triangle 3: 1 2 5;   triangle 2: 5 2 6 ...
+			*/
+
+			// construct the triangle indices to be drawn
+			if (i < nr_points_width - 1 && j < nr_points_height - 1) {
+	
+				// using vector
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width + 1);
+
+			}
+
+			i_ind++;
+		}
+
+		y_prev = y; z_prev = z;
+	}
+
+}
+
+void drawVertices_generateTexture(const VerticesData& vertices_data) {
+	glLoadIdentity();
+	glTranslated(0, 0, display_distance);
+
+	// enable matrices for use in drawing below
+	//glEnable(GL_LIGHTING);
+	glEnable(GL_POLYGON_SMOOTH);
+	glEnable(GL_BLEND);
+	//glEnable(GL_TEXTURE_2D);
+	//glEnable(GL_NORMALIZE); //so we don't need to normalize our normal for surfaces
+
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+	// activate and specify pointer to vertex array
+	glEnableClientState(GL_VERTEX_ARRAY);
+	//glEnableClientState(GL_NORMAL_ARRAY);
+	glEnableClientState(GL_COLOR_ARRAY);
+
+	/*
+		// using array
+		glVertexPointer(3, GL_FLOAT, 0, vertices);
+		glTexCoordPointer(2, GL_FLOAT, 0, texcoors);
+		//glNormalPointer(GL_FLOAT, 0, normals); //
+		glColorPointer(3, GL_FLOAT, 0, colors);
+		glDrawElements(GL_TRIANGLES, total_ind, GL_UNSIGNED_INT, indices_draw_triangle);
+	*/
+
+	//using vector
+	glVertexPointer(3, GL_FLOAT, 0, &vertices_data.vertices_vec[0]);
+	//glNormalPointer(GL_FLOAT, 0, &vertices_data.normals_vec[0]); //
+	glColorPointer(3, GL_FLOAT, 0, &vertices_data.colors_vec[0]);
+	glDrawElements(GL_TRIANGLES, vertices_data.indices_draw_triangle_vec.size(), GL_UNSIGNED_INT, &vertices_data.indices_draw_triangle_vec[0]);
+
+	// deactivate vertex arrays after drawing
+	glDisableClientState(GL_VERTEX_ARRAY);
+	//glDisableClientState(GL_NORMAL_ARRAY);
+	glDisableClientState(GL_COLOR_ARRAY);
+}
+
+
 void initStimulus() {
-	buildVertices_triangles(depth, my_vertices);
+	//buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+	//texnum = 1;
+	
+	if (use_loaded_texture) {
+		buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+		texnum = 1;
+	}
+	else {
+		buildVertices_generateTexture(depth, 0.02, 2.4, vertices_genTxt);
+	}
+
 	initProjectionScreen(display_distance);
-	texnum = 1;
+
 }
 
 
@@ -410,7 +686,7 @@ void drawGLScene() {
 		//glDrawBuffer(GL_BACK);
 
 		// Draw left eye view
-		glDrawBuffer(GL_BACK_LEFT);
+		glDrawBuffer(GL_FRONT_LEFT);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glClearColor(0.0, 0.0, 0.0, 1.0);
 		cam.setEye(eyeLeft);
@@ -419,7 +695,7 @@ void drawGLScene() {
 		drawInfo();
 
 		// Draw right eye view
-		glDrawBuffer(GL_BACK_RIGHT);
+		glDrawBuffer(GL_FRONT_RIGHT);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glClearColor(0.0, 0.0, 0.0, 1.0);
 		cam.setEye(eyeRight);
@@ -478,8 +754,7 @@ void handleKeypress(unsigned char key, int x, int y)
 				depth = depth - depth_step;
 			}
 
-
-			buildVertices_triangles(depth, my_vertices);
+			initStimulus();
 
 
 		}
@@ -488,7 +763,7 @@ void handleKeypress(unsigned char key, int x, int y)
 		case '2':
 		{
 			depth = depth + depth_step;
-			buildVertices_triangles(depth, my_vertices);
+			initStimulus();
 
 
 		}
@@ -512,35 +787,45 @@ void handleKeypress(unsigned char key, int x, int y)
 
 		case '+':
 		{
-			texnum = (texnum + 1) % 5;
+			//texnum = (texnum + 1) % 5;
+			use_loaded_texture = !use_loaded_texture;
+			initStimulus();
 			break;
 		}
 
 		case '4':
 		{
 			normalizer_u = normalizer_u - 10;
-			buildVertices_triangles(depth, my_vertices);
+			if (use_loaded_texture) {
+				buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+			}
 			break;
 		}
 
 		case '5':
 		{
 			normalizer_u = normalizer_u + 10;
-			buildVertices_triangles(depth, my_vertices);
+			if (use_loaded_texture) {
+				buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+			}
 			break;
 		}
 
 		case '7':
 		{
 			normalizer_v = normalizer_v - 10;
-			buildVertices_triangles(depth, my_vertices);
+			if (use_loaded_texture) {
+				buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+			}
 			break;
 		}
 
 		case '8':
 		{
 			normalizer_v = normalizer_v + 10;
-			buildVertices_triangles(depth, my_vertices);
+			if (use_loaded_texture) {
+				buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+			}
 			break;
 		}
 
@@ -550,7 +835,9 @@ void handleKeypress(unsigned char key, int x, int y)
 			normalizer = normalizer - 10;
 			normalizer_u = normalizer;
 			normalizer_v = normalizer;
-			buildVertices_triangles(depth, my_vertices);
+			if (use_loaded_texture) {
+				buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+			}
 			break;
 		}
 
@@ -559,7 +846,9 @@ void handleKeypress(unsigned char key, int x, int y)
 			normalizer = normalizer + 10;
 			normalizer_u = normalizer;
 			normalizer_v = normalizer;
-			buildVertices_triangles(depth, my_vertices);
+			if (use_loaded_texture) {
+				buildVertices_fromLoadedTexture(depth, vertices_loadTxt);
+			}
 			break;
 		}
 	}
